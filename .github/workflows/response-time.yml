@@ -13,5 +13,6 @@ jobs:
           node-version: '20'
       - uses: upptime/uptime-monitor@v1.41.0
         with:
-          GH_PAT: ${{ secrets.GH_PAT }}
           command: response-time
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
