@@ -8,11 +8,11 @@ Public status page for CSNP services powered by [Upptime](https://upptime.js.org
 
 ## Monitored Services
 
-| Service | URL |
-|---------|-----|
-| CSNP Portal | https://portal.csnp.org |
-| CSNP Website | https://csnp.org |
-| QRAMM | https://qramm.org |
+| Service      | URL                     |
+| ------------ | ----------------------- |
+| CSNP Portal  | https://portal.csnp.org |
+| CSNP Website | https://csnp.org        |
+| QRAMM        | https://qramm.org       |
 
 ## Subscribe to Updates
 
