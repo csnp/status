@@ -1,0 +1,55 @@
+# CSNP Status Page Configuration
+owner: csnp
+repo: status
+
+# Sites to monitor
+sites:
+  - name: CSNP Portal
+    url: https://portal.csnp.org
+    icon: https://portal.csnp.org/favicon.png
+    
+  - name: CSNP Website
+    url: https://csnp.org
+    
+  - name: QRAMM
+    url: https://qramm.org
+
+# Status page settings
+status-website:
+  cname: status.csnp.org
+  logoUrl: https://portal.csnp.org/favicon.png
+  name: CSNP Status
+  introTitle: "Service Status"
+  introMessage: "Real-time status for CSNP services. [Subscribe to updates](https://github.com/csnp/status/issues/new?template=subscribe.yml) to get notified."
+  navbar:
+    - title: Portal
+      href: https://portal.csnp.org
+    - title: CSNP
+      href: https://csnp.org
+    - title: GitHub
+      href: https://github.com/csnp
+
+# Notifications
+assignees:
+  - decimai
+
+# Check every 5 minutes
+workflowSchedule:
+  graphs: "0 0 * * *"
+  responseTime: "0 23 * * *"
+  staticSite: "0 1 * * *"
+  summary: "0 0 * * *"
+  updateTemplate: "0 0 * * *"
+  updates: "*/5 * * * *"
+  uptime: "*/5 * * * *"
+
+# Commit settings  
+commitMessages:
+  commitAuthorName: "CSNP Status Bot"
+  commitAuthorEmail: "status@csnp.org"
+
+# Optional customization
+i18n:
+  activeIncidents: Active Incidents
+  allSystemsOperational: All Systems Operational
+  incidentReport: Incident Report
