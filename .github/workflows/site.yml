@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -19,3 +21,9 @@ jobs:
           command: site
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
+      - uses: peaceiris/actions-gh-pages@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          github_token: ${{ secrets.GH_PAT }}
+          publish_dir: ./status-website
+          cname: status.csnp.org
