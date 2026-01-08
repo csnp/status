@@ -25,5 +25,5 @@ jobs:
         if: github.ref == 'refs/heads/main'
         with:
           github_token: ${{ secrets.GH_PAT }}
-          publish_dir: ./status-website
+          publish_dir: ./__sapper__/export
           cname: status.csnp.org
