@@ -7,23 +7,29 @@ on:
     branches:
       - main
 jobs:
-  build:
+  release:
+    name: Build and deploy site
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GH_PAT }}
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - uses: upptime/uptime-monitor@v1.41.0
+      - name: Generate site
+        uses: upptime/uptime-monitor@v1.41.0
         with:
-          command: site
+          command: "site"
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
       - uses: peaceiris/actions-gh-pages@v4
-        if: github.ref == 'refs/heads/main'
+        name: GitHub Pages Deploy
         with:
           github_token: ${{ secrets.GH_PAT }}
-          publish_dir: ./__sapper__/export
+          publish_dir: "site/status-page/__sapper__/export/"
           cname: status.csnp.org
+          user_name: "CSNP Status Bot"
+          user_email: "status@csnp.org"
