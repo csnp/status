@@ -1,3 +1,26 @@
+# Pinned deliberately. Read this before changing the version or adding a setup-node step.
+#
+# From 2026-06-17 to 2026-08-05 every workflow in this repo failed on every run and
+# status.csnp.org went on serving a page whose data stopped that day. 49 days. Nobody
+# was told, because a scheduled workflow that fails notifies nobody who was looking.
+#
+# The cause was upptime/uptime-monitor@v1.41.0 shipping a prebuilt node_libcurl.node
+# compiled for NODE_MODULE_VERSION 115 (Node 20). GitHub now executes node20 actions
+# under Node 24 (NODE_MODULE_VERSION 137), so the action aborted on require, before it
+# did any work at all.
+#
+# The setup-node step that used to sit here pinned node-version 20 and was removed
+# because it does nothing for this failure and actively misleads: it sets the Node used
+# by run: steps, and there are none. The Node an action runs under comes from the
+# runner and from the action own runs.using declaration, neither of which setup-node
+# touches. Anyone diagnosing this again will reach for that step first, as we did.
+#
+# v1.43.13 is not a guess. upptime own demo repo runs it on the same hosted runners and
+# was succeeding on the day this was pinned.
+#
+# What catches a recurrence is .github/workflows/deployment-drift.yml, which asks how
+# old the data is rather than whether a run went green.
+
 name: Response Time CI
 on:
   schedule:
@@ -7,11 +30,8 @@ jobs:
   response-time:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - uses: upptime/uptime-monitor@v1.41.0
+      - uses: actions/checkout@v6
+      - uses: upptime/uptime-monitor@v1.43.13
         with:
           command: response-time
         env:
