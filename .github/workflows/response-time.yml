@@ -26,6 +26,17 @@ on:
   schedule:
     - cron: "0 23 * * *"
   workflow_dispatch:
+concurrency:
+  # All five workflows commit to main. graphs and summary are both scheduled at 00:00, so
+  # they raced by default and only GitHub's scheduler jitter kept it intermittent. Running
+  # three of them together on 2026-08-06 reproduced it immediately: Response Time pushed
+  # first, Summary and Graphs both died on "failed to push some refs".
+  #
+  # One group across every workflow in the repository, because the conflict is over one
+  # branch, not one workflow. cancel-in-progress is false: these runs write data, and
+  # cancelling one loses the measurement it was about to record.
+  group: ${{ github.repository }}-upptime
+  cancel-in-progress: false
 jobs:
   response-time:
     runs-on: ubuntu-latest
