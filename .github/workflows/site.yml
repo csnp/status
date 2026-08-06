@@ -36,8 +36,18 @@ concurrency:
   # first, Summary and Graphs both died on "failed to push some refs".
   #
   # One group across every workflow in the repository, because the conflict is over one
-  # branch, not one workflow. cancel-in-progress is false: these runs write data, and
-  # cancelling one loses the measurement it was about to record.
+  # branch, not one workflow. This matches what upstream generates.
+  #
+  # cancel-in-progress: false protects the run that is already executing. It does NOT mean
+  # nothing is cancelled: GitHub allows only one PENDING run per group, so when a third
+  # run joins, the one waiting is superseded. Measured on 2026-08-06, dispatching three
+  # together: uptime and graphs completed, summary and site were cancelled while waiting.
+  #
+  # That is the deliberate trade. A cancelled run loses one cycle of data quietly and the
+  # next scheduled run replaces it. A push race loses the same data AND fails red for a
+  # reason that has nothing to do with the sites being monitored, which is worse to read.
+  # What makes the quiet loss safe here is the drift check: it asks how old the data is,
+  # so a cancellation that actually mattered would surface within 48h.
   group: ${{ github.repository }}-upptime
   cancel-in-progress: false
 jobs:
