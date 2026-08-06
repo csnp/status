@@ -133,7 +133,13 @@ jobs:
 
             # From an API response and about to be handed to git, so it is not used until
             # it looks like a commit.
-            if ! printf '%s' "$PAGES_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
+            #
+            # [[ =~ ]] and not `grep -Eq`, because grep matches LINE BY LINE. A value of
+            # "deadbeef...\ninjected" has a first line that is valid hex, so grep says yes
+            # and the multiline value goes on to reach git and the issue body. Bash's
+            # regex match applies to the whole string. Found in the csnp-connect check,
+            # which had the same guard written the same way.
+            if ! [[ "$PAGES_COMMIT" =~ ^[0-9a-f]{40}$ ]]; then
               echo "The Pages build record carried no usable commit ($PAGES_COMMIT), so the served bytes cannot be compared against anything." >> failures.txt
             else
               git fetch -q --no-tags origin gh-pages 2>/dev/null || true
