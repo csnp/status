@@ -185,6 +185,15 @@ good_runs; serve_ok
 echo '{"status":"built","commit":"not-a-sha","updated_at":"2026-08-05T00:00:00Z"}' > CASE_PAGES
 run_case "pages commit not a sha, never reaches git" "drift" "no usable commit"
 
+# grep matches line by line, so a value whose FIRST line is 40 valid hex characters passes
+# a `grep -Eq` guard and the rest of the string travels on into git and the issue body.
+# Without this case the guard can be written the line-based way with nothing going red.
+setup_repo 3
+good_runs; serve_ok
+printf '{"status":"built","commit":"%s\\ninjected","updated_at":"2026-08-05T00:00:00Z"}\n' \
+  "0123456789abcdef0123456789abcdef01234567" > CASE_PAGES
+run_case "a valid sha followed by a newline is still refused" "drift" "no usable commit"
+
 setup_repo 3
 good_runs; good_pages; serve_ok; echo "pages/builds" > CASE_GH_FAIL
 run_case "pages record unreadable, says so" "drift" "could not be read"

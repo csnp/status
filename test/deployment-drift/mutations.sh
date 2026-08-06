@@ -98,7 +98,10 @@ mutate "CDN window widened so a real mismatch is always excused" \
   's/if \[ "\$PAGES_AGE_MIN" -lt 30 \]; then/if [ "\$PAGES_AGE_MIN" -lt 999999 ]; then/'
 
 mutate "sha guard dropped, an API string is handed straight to git" \
-  's/if ! printf .%s. "\$PAGES_COMMIT" \| grep -Eq .\^\[0-9a-f\]\{40\}\$.; then/if false; then/'
+  's/if ! \[\[ "\$PAGES_COMMIT" =~ \^\[0-9a-f\]\{40\}\$ \]\]; then/if false; then/'
+
+mutate "sha guard back to the line-based grep form" \
+  's/! \[\[ "\$PAGES_COMMIT" =~ \^\[0-9a-f\]\{40\}\$ \]\]/! printf '%s' "\$PAGES_COMMIT" | grep -Eq '^[0-9a-f]{40}$'/'
 
 mutate "pages build status never checked" \
   's/if \[ "\$PAGES_STATUS" != "built" \]; then/if false; then/'

@@ -25,7 +25,7 @@ constant is only testing its own constant.
 
 ## What proves the cases are worth anything
 
-`mutations.sh` breaks the check fourteen ways and requires the suite to go red each time.
+`mutations.sh` breaks the check fifteen ways and requires the suite to go red each time.
 Several of the mutations are not hypothetical: branching on curl's exit status, and the
 `|| echo 000` fallback that yields the literal `000000`, are both how the first version of
 this family of checks was written in csnp-connect.
