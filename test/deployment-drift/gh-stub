@@ -1,0 +1,45 @@
+#!/bin/bash
+# Stand-in for gh. Answers the three API paths the check asks for, out of files a case
+# controls. A path listed in CASE_GH_FAIL exits non-zero with no output, which is how the
+# "this run proves nothing" branches are reached.
+set -uo pipefail
+
+ARG_PATH=""
+JQ_EXPR=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    api) shift ;;
+    --jq) JQ_EXPR="$2"; shift 2 ;;
+    -*) shift ;;
+    *) [ -z "$ARG_PATH" ] && ARG_PATH="$1"; shift ;;
+  esac
+done
+
+if [ -f CASE_GH_FAIL ] && grep -qF -- "$(printf '%s' "$ARG_PATH" | sed 's/.*\(pages\/builds\|runs?status=success\|runs?per_page\).*/\1/')" CASE_GH_FAIL; then
+  exit 1
+fi
+
+# A GitHub error body is valid JSON and carries .status holding the HTTP code. The exit
+# code is separately controllable so the two guards (gh's exit status, and requiring
+# .commit) can each be tested without the other masking it.
+ERRBODY='{"message":"Not Found","documentation_url":"https://docs.github.com/rest","status":"404"}'
+case "$ARG_PATH" in
+  *pages/builds/latest*)
+    if [ -f CASE_PAGES_ERR ]; then printf '%s' "$ERRBODY"; exit "$(cat CASE_PAGES_ERR)"; fi ;;
+  *runs\?per_page*)
+    if [ -f CASE_RUNS_ERR ]; then printf '%s' "$ERRBODY"; exit "$(cat CASE_RUNS_ERR)"; fi ;;
+esac
+
+OUT=""
+case "$ARG_PATH" in
+  *pages/builds/latest*)      OUT="$(cat CASE_PAGES)" ;;
+  *runs\?status=success*)     OUT="$(cat CASE_RUNS_SUCCESS)" ;;
+  *runs\?per_page*)           OUT="$(cat CASE_RUNS)" ;;
+  *)                          exit 1 ;;
+esac
+
+if [ -n "$JQ_EXPR" ]; then
+  printf '%s' "$OUT" | jq -r "$JQ_EXPR"
+else
+  printf '%s' "$OUT"
+fi

@@ -1,0 +1,237 @@
+# Ask whether status.csnp.org is still telling the truth.
+#
+# The other four CSNP sites are watched by asking the domain which commit it serves. That
+# question is close to meaningless here, and asking it would have produced a green tick
+# through the whole outage described below.
+#
+# status.csnp.org is an Upptime instance. The page the domain serves is a static shell
+# built from gh-pages, and the shell changes almost never: six commits in its entire
+# history, two months apart. What a reader actually sees is fetched client-side from the
+# data committed on main. So the shell can be perfectly current while the page is lying.
+#
+# It lied for 49 days. From 2026-06-17 to 2026-08-05 every Upptime workflow failed on
+# every run, because upptime/uptime-monitor@v1.41.0 ships a prebuilt node_libcurl.node
+# built for Node 20 and GitHub began running node20 actions under Node 24. The monitor
+# never started. The page went on showing the last thing it knew, which was green.
+#
+# A monitor frozen on green is worse than no monitor, so this check asks how old the data
+# is, not whether a run went green.
+
+name: Deployment drift
+
+on:
+  schedule:
+    # 14:00 UTC daily, matching the other four CSNP sites.
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  # Reading the uptime workflow's own run history. Without this, question B is blind and
+  # says so rather than passing.
+  actions: read
+  pages: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      SITE: https://status.csnp.org
+      # Committed to gh-pages and served verbatim. .nojekyll is present, which is what
+      # stops Pages transforming the file and making the comparison meaningless. Confirmed
+      # byte-identical on 2026-08-05 before this check was written.
+      WITNESS: index.html
+      # Measured, not chosen. Over the 60 healthy days to 2026-06-17 the gap between
+      # commits touching history/ had p50 1.45h, p99 22.53h and a maximum of 22.57h, which
+      # is the daily summary cadence. 48h clears that maximum twice over, so a single
+      # skipped day cannot fire it, and it still catches a 49-day outage on day two.
+      MAX_DATA_AGE_H: 48
+      ISSUE_TITLE: 'status.csnp.org is showing data that stopped updating'
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Full history: the data-age question reads a commit date out of the log, and
+          # the byte comparison reads a file out of the commit Pages says it published.
+          # Neither resolves in a shallow clone.
+          fetch-depth: 0
+
+      - name: Ask how old the data is, whether the monitor runs, and what the domain serves
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          NOW="$(date -u +%s)"
+          : > failures.txt
+
+          # ---- A. is the data fresh -------------------------------------------------
+          # This is the question that would have caught the outage, and it is asked first
+          # because it is the only one whose answer a reader of the status page depends on.
+          DATA_EPOCH="$(git log -1 --format=%ct "origin/$GITHUB_REF_NAME" -- history/ 2>/dev/null || echo '')"
+          if [ -z "$DATA_EPOCH" ]; then
+            DATA_EPOCH="$(git log -1 --format=%ct -- history/ 2>/dev/null || echo '')"
+          fi
+
+          if [ -z "$DATA_EPOCH" ]; then
+            echo "No commit touching history/ could be found at all, so the age of the data on status.csnp.org cannot be established. Either the directory was renamed or this is not the branch Upptime writes to." >> failures.txt
+          else
+            DATA_AGE_H=$(( ( NOW - DATA_EPOCH ) / 3600 ))
+            DATA_AT="$(git log -1 --format=%cI -- history/ 2>/dev/null)"
+            echo "data last written: $DATA_AT (${DATA_AGE_H}h ago, limit ${MAX_DATA_AGE_H}h)"
+            if [ "$DATA_AGE_H" -gt "$MAX_DATA_AGE_H" ]; then
+              echo "The uptime data behind status.csnp.org was last written $DATA_AT, ${DATA_AGE_H} hours ago, against a limit of ${MAX_DATA_AGE_H}. The page is still being served and still shows whatever it last knew, so every reader is being told the site is in a state nobody has measured since then." >> failures.txt
+            fi
+          fi
+
+          # ---- B. does the monitor itself still run ---------------------------------
+          # A separate question from A on purpose. A run can succeed and write nothing, and
+          # the monitor can be broken for a day before A notices. B is also the answer to
+          # "what do I do about it", which A on its own does not give.
+          # Branching on gh's EXIT STATUS, not on whether the body parses. A GitHub error
+          # response is valid JSON and carries a .status field holding the HTTP code, so
+          # `jq -e .` accepts it and the fields below read straight out of the error: a
+          # 404 was being reported as "the most recent Pages build is '404'". That is the
+          # wrong-system diagnosis this whole family of checks exists to avoid, and it is
+          # the same shape as branching on curl's exit status instead of its status code.
+          if ! RUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/uptime.yml/runs?per_page=1" 2>/dev/null)"; then
+            RUNS=""
+          fi
+          if [ -z "$RUNS" ] || ! printf '%s' "$RUNS" | jq -e '.workflow_runs' >/dev/null 2>&1; then
+            echo "The run history for uptime.yml could not be read, so whether the monitor is running is unknown. This run proves nothing about question B, which is itself worth knowing. Most likely the workflow token lost actions:read." >> failures.txt
+          else
+            LAST_CONCLUSION="$(printf '%s' "$RUNS" | jq -r '.workflow_runs[0].conclusion // "none"')"
+            LAST_AT="$(printf '%s' "$RUNS" | jq -r '.workflow_runs[0].created_at // "never"')"
+            echo "uptime.yml last run: $LAST_AT ($LAST_CONCLUSION)"
+            if [ "$LAST_CONCLUSION" != "success" ]; then
+              OK_AT="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/uptime.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].created_at // "never"' 2>/dev/null || echo 'unknown')"
+              echo "The uptime monitor's own workflow last finished '$LAST_CONCLUSION' at $LAST_AT, and last succeeded at $OK_AT. While it is failing, nothing is measuring the sites this page reports on. A failing scheduled workflow raises no alert by itself, which is how the 2026-06-17 outage went 49 days unnoticed." >> failures.txt
+            fi
+          fi
+
+          # ---- C. is the domain still serving our published site --------------------
+          # A and B are both read out of this repository. Neither would notice the domain
+          # being re-pointed, at DNS or by another repository claiming the CNAME, because
+          # the repository would look perfectly healthy throughout.
+          if ! BUILD="$(gh api "repos/$GITHUB_REPOSITORY/pages/builds/latest" 2>/dev/null)"; then
+            BUILD=""
+          fi
+          # .status alone is not enough to tell a build record from an error body, because
+          # both have one. Requiring .commit is what distinguishes them.
+          if [ -z "$BUILD" ] || ! printf '%s' "$BUILD" | jq -e 'has("commit")' >/dev/null 2>&1; then
+            echo "The Pages build record could not be read, so what the domain serves cannot be tied to any commit. Most likely the workflow token lost pages:read, or Pages was turned off for this repository." >> failures.txt
+          else
+            PAGES_STATUS="$(printf '%s' "$BUILD" | jq -r '.status // "absent"')"
+            PAGES_COMMIT="$(printf '%s' "$BUILD" | jq -r '.commit // "absent"')"
+            PAGES_AT="$(printf '%s' "$BUILD" | jq -r '.updated_at // "absent"')"
+            echo "pages published: $PAGES_COMMIT ($PAGES_STATUS at $PAGES_AT)"
+
+            if [ "$PAGES_STATUS" != "built" ]; then
+              echo "The most recent Pages build is '$PAGES_STATUS', not 'built'. A failed build leaves the previous content in place and the domain keeps answering, so the site looks healthy while no new publish has landed." >> failures.txt
+            fi
+
+            # From an API response and about to be handed to git, so it is not used until
+            # it looks like a commit.
+            if ! printf '%s' "$PAGES_COMMIT" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "The Pages build record carried no usable commit ($PAGES_COMMIT), so the served bytes cannot be compared against anything." >> failures.txt
+            else
+              git fetch -q --no-tags origin gh-pages 2>/dev/null || true
+              if ! git cat-file -e "${PAGES_COMMIT}^{commit}" 2>/dev/null; then
+                git fetch -q --no-tags --depth=1 origin "$PAGES_COMMIT" 2>/dev/null || true
+              fi
+
+              # curl -w already prints 000 when the request never completes, so the usual
+              # `|| echo 000` fallback would yield the literal 000000 and match no branch.
+              # The output file is truncated first because curl leaves it untouched on a
+              # failed request, and a previous body would otherwise be read as this one.
+              # No -L: following a redirect hands the verdict to the redirect target, so a
+              # domain that now forwards elsewhere would score as healthy.
+              # --max-filesize because the body lands on the runner's disk before it is
+              # inspected, and this is by definition an address that might not be ours.
+              : > served
+              STATUS="$(curl -sS -o served -w '%{http_code}' --max-time 30 --max-filesize 10485760 "$SITE/$WITNESS" 2>/dev/null)"
+              # Defaulting AFTER the substitution, not with `|| echo 000` inside it. curl
+              # already prints 000 for a request that never completed, so the fallback
+              # inside would concatenate to the literal 000000 and match no branch. This
+              # form only covers curl failing to execute at all, which leaves it empty.
+              STATUS="${STATUS:-000}"
+
+              if [ "$STATUS" = "000" ]; then
+                echo "$SITE/$WITNESS could not be reached at all: the request never completed, which is DNS or TLS rather than an application error." >> failures.txt
+              elif [ "$STATUS" -ge 300 ] 2>/dev/null && [ "$STATUS" -lt 400 ] 2>/dev/null; then
+                echo "$SITE/$WITNESS answered HTTP $STATUS, a redirect. The domain is forwarding somewhere else rather than serving our published site. This is a distinct verdict from a malformed body on purpose: curl exits 0 on a redirect, so a check that branched on curl's exit status would report this as a content problem forever and send whoever reads it to the wrong system." >> failures.txt
+              elif [ "$STATUS" != "200" ]; then
+                echo "$SITE/$WITNESS answered HTTP $STATUS, so the domain is not serving the site." >> failures.txt
+              elif ! git cat-file -e "$PAGES_COMMIT:$WITNESS" 2>/dev/null; then
+                echo "$WITNESS does not exist at $PAGES_COMMIT, so there is nothing to compare the served bytes against. Either the witness file was renamed or Pages published a commit that could not be fetched." >> failures.txt
+              else
+                SERVED_HASH="$(sha256sum served | cut -d' ' -f1)"
+                BUILT_HASH="$(git show "$PAGES_COMMIT:$WITNESS" | sha256sum | cut -d' ' -f1)"
+                echo "domain serves $WITNESS: $SERVED_HASH"
+                echo "commit $PAGES_COMMIT has: $BUILT_HASH"
+                if [ "$SERVED_HASH" != "$BUILT_HASH" ]; then
+                  PAGES_AGE_MIN=999999
+                  if [ "$PAGES_AT" != "absent" ]; then
+                    PAGES_EPOCH="$(date -u -d "$PAGES_AT" +%s 2>/dev/null || echo '')"
+                    [ -n "$PAGES_EPOCH" ] && PAGES_AGE_MIN=$(( ( NOW - PAGES_EPOCH ) / 60 ))
+                  fi
+                  # The Pages CDN sends cache-control max-age=600, so a fresh publish can
+                  # be served stale for a few minutes. Calling that a hijack would fire the
+                  # alarm every time the site is rebuilt.
+                  if [ "$PAGES_AGE_MIN" -lt 30 ]; then
+                    echo "content differs but the build is only ${PAGES_AGE_MIN} min old, inside the CDN window"
+                  else
+                    echo "$SITE is serving a $WITNESS that does not match the one committed at $PAGES_COMMIT, the commit Pages says it published ${PAGES_AGE_MIN} minutes ago. Pages is publishing somewhere this domain does not point. Check the DNS records for status.csnp.org, and check whether another repository has claimed the CNAME." >> failures.txt
+                  fi
+                fi
+              fi
+            fi
+          fi
+
+          # The verdict is the only thing that crosses into GITHUB_OUTPUT. Every detail
+          # line stays in failures.txt, because those lines carry text fetched from the
+          # network and a newline in one of them would break out of the assignment.
+          if [ -s failures.txt ]; then
+            echo "verdict=drift" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict=ok" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report
+        if: steps.check.outputs.verdict != 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          EXISTING="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
+
+          {
+            while IFS= read -r line; do
+              echo "- $line"
+            done < failures.txt
+            echo
+            echo "What to check, in this order:"
+            echo "1. \`gh run list --workflow uptime.yml --limit 5\` - is the monitor failing, and since when?"
+            echo "2. If it is failing on a native module or a Node version, the pin in the workflow header"
+            echo "   is the first thing to read. That is what broke it on 2026-06-17."
+            echo "3. \`gh api repos/${{ github.repository }}/pages\` - is the source still \`gh-pages\`, and is"
+            echo "   \`cname\` still \`status.csnp.org\`?"
+            echo "4. \`dig +short status.csnp.org\` - do the records still point at GitHub Pages?"
+            echo
+            echo "The page answering, and the page being true, are separate facts. This check exists"
+            echo "because the first stayed true for 49 days while the second was false."
+          } > issue-body.md
+
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file issue-body.md
+            echo "commented on #$EXISTING"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file issue-body.md
+          fi
+
+      - name: Fail the run so the schedule surfaces it
+        if: steps.check.outputs.verdict != 'ok'
+        run: |
+          echo "::error::$(tr '\n' ' ' < failures.txt)"
+          exit 1

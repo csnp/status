@@ -1,0 +1,43 @@
+# Keep the drift check honest.
+#
+# deployment-drift.yml is the thing that would have caught the 49-day outage in June. A
+# check nobody tests decays into a check that always passes, which is the state the whole
+# status page was in.
+#
+# Both suites run. The cases prove the check reports correctly; the mutations prove the
+# cases would notice if it stopped.
+
+name: Drift check tests
+
+on:
+  push:
+    paths:
+      - '.github/workflows/deployment-drift.yml'
+      - '.github/workflows/drift-check-tests.yml'
+      - 'test/deployment-drift/**'
+  pull_request:
+    paths:
+      - '.github/workflows/deployment-drift.yml'
+      - '.github/workflows/drift-check-tests.yml'
+      - 'test/deployment-drift/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install what the harness needs
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq python3-yaml
+
+      - name: The check reports correctly
+        run: bash test/deployment-drift/cases.sh .github/workflows/deployment-drift.yml
+
+      - name: The cases would notice if it stopped
+        run: bash test/deployment-drift/mutations.sh .github/workflows/deployment-drift.yml
