@@ -1,0 +1,18 @@
+# Upptime builds the status page into site/ and publishes it to gh-pages. The build
+# output has never been committed and must not start being.
+site/
+node_modules/
+
+# Credential shapes, so a stray file cannot be committed by accident. Checked against the
+# tracked file list before adding: this hides nothing already in the repository.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+credentials.json
+
+.DS_Store
