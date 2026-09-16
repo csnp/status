@@ -110,6 +110,31 @@ jobs:
             fi
           fi
 
+          # ---- B2. does the portal health probe still run ---------------------------
+          # portal-health.yml watches portal.csnp.org every ten minutes from this repository
+          # (it moved here on 2026-09-16 because a private repository's minutes are metered
+          # and it had exhausted them). The same question as B, for the same reason: a probe
+          # that has stopped running reports nothing, and nothing reads as healthy.
+          if ! PRUNS="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/portal-health.yml/runs?per_page=1" 2>/dev/null)"; then
+            PRUNS=""
+          fi
+          if [ -z "$PRUNS" ] || ! printf '%s' "$PRUNS" | jq -e '.workflow_runs' >/dev/null 2>&1; then
+            echo "The run history for portal-health.yml could not be read, so whether the portal probe is running is unknown." >> failures.txt
+          else
+            PLAST_AT="$(printf '%s' "$PRUNS" | jq -r '.workflow_runs[0].created_at // empty')"
+            if [ -z "$PLAST_AT" ]; then
+              echo "portal-health.yml has never run, so portal.csnp.org is not being probed from here." >> failures.txt
+            else
+              PLAST_EPOCH="$(date -u -d "$PLAST_AT" +%s 2>/dev/null || echo '')"
+              PAGE_MIN=999999
+              [ -n "$PLAST_EPOCH" ] && PAGE_MIN=$(( ( NOW - PLAST_EPOCH ) / 60 ))
+              echo "portal-health.yml last run: $PLAST_AT (${PAGE_MIN} min ago, limit 60)"
+              if [ "$PAGE_MIN" -gt 60 ]; then
+                echo "portal-health.yml last ran $PLAST_AT, ${PAGE_MIN} minutes ago, against a limit of 60 for a ten-minute schedule. portal.csnp.org is not being probed; the schedule is stalled, disabled, or refused." >> failures.txt
+              fi
+            fi
+          fi
+
           # ---- C. is the domain still serving our published site --------------------
           # A and B are both read out of this repository. Neither would notice the domain
           # being re-pointed, at DNS or by another repository claiming the CNAME, because
