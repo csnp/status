@@ -1,0 +1,147 @@
+# Is portal.csnp.org healthy right now? An external answer every ten minutes.
+#
+# "Healthy" is the four-predicate definition recorded for the portal on 2026-09-03: the page
+# answers, the deployed build says what it is, the check-in function's runtime is alive, and the
+# REST API answers the anon key. Anything else is unknown, opens (or comments on) one issue in
+# this repository, and fails the run. The first ok verdict while that issue is open comments the
+# recovery time and closes it, so the issue's lifetime is the incident's lifetime.
+#
+# This workflow lives here, in the public status repository, and not in the portal repository it
+# watches, on purpose. GitHub bills every job as a whole minute however short it is, and a private
+# repository's jobs draw on the organisation's shared included minutes. From 2026-09-08 to
+# 2026-09-15 this same probe, running every ten minutes from the private portal repository,
+# consumed the whole allowance and GitHub then refused every job in every private repository of
+# the organisation, the probe included, so it produced failure emails and no health signal. A
+# public repository's jobs are not metered. A monitor never draws on the quota of the CI it
+# watches.
+#
+# Two probes touch data-free paths on purpose: POST check-in with an empty body carries no
+# credential and is answered 401 by the authorised function before any data is read, and the
+# REST read asks for one event id, which is public. The anon key is the browser bundle's public
+# key, held as a repository secret so it is not written into this file; the probe fails, never
+# skips, when the secret is absent.
+
+name: Portal health
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+# Never queued behind, or cancelled by, the Upptime workflows: this job commits nothing.
+concurrency:
+  group: portal-health
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    env:
+      SITE: https://portal.csnp.org
+      API: https://yciegikykkpdbahppgwg.supabase.co
+      ISSUE_TITLE: 'portal.csnp.org is not healthy'
+      ASSIGNEE: decimai
+    steps:
+      - name: Probe the four predicates
+        id: check
+        shell: bash
+        env:
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -uo pipefail
+          : > detail.txt
+          fail() { printf '%s\n' "$1" >> detail.txt; }
+          # curl -w prints 000 itself when a request never completes, so the fallbacks below only
+          # cover curl failing to execute; an `|| echo 000` would concatenate to 000000.
+
+          # 1. The page answers 200 under 2 s.
+          t0=$(date +%s%N)
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$SITE/" 2>/dev/null); code=${code:-000}
+          ms=$(( ( $(date +%s%N) - t0 ) / 1000000 ))
+          echo "GET / -> $code in ${ms}ms"
+          [ "$code" = "200" ] || fail "GET $SITE/ answered HTTP $code (expected 200)."
+          [ "$ms" -lt 2000 ] || fail "GET $SITE/ took ${ms}ms (expected under 2000)."
+
+          # 2. The build says what it is.
+          body=$(curl -sS --max-time 10 "$SITE/version.json" 2>/dev/null || true)
+          commit=$(printf '%s' "$body" | jq -r '.commit // empty' 2>/dev/null || true)
+          echo "version.json commit: ${commit:-<none>}"
+          if ! [[ "$commit" =~ ^[0-9a-f]{7,40}$ ]]; then fail "$SITE/version.json is missing or carries no commit (the SPA fallback answered, or the build did not stamp)."; fi
+
+          # 3. The check-in runtime is alive: an empty, credential-less body is refused by the
+          #    function itself (401) before it reads anything.
+          t0=$(date +%s%N)
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 -X POST "$API/functions/v1/check-in" -H 'Content-Type: application/json' -d '{}' 2>/dev/null); code=${code:-000}
+          ms=$(( ( $(date +%s%N) - t0 ) / 1000000 ))
+          echo "POST check-in {} -> $code in ${ms}ms"
+          [ "$code" = "401" ] || fail "POST $API/functions/v1/check-in {} answered HTTP $code (expected 401 from the authorised function)."
+          [ "$ms" -lt 1500 ] || fail "POST check-in took ${ms}ms (expected under 1500)."
+
+          # 4. REST answers the anon key with one public event id.
+          if [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            fail "The SUPABASE_ANON_KEY repository secret is not set, so the REST probe could not run. Set it (the browser bundle's public anon key) and re-run; an unrun probe is not a pass."
+          else
+            code=$(curl -sS -o rest.json -w '%{http_code}' --max-time 10 "$API/rest/v1/events?select=id&limit=1" -H "apikey: $SUPABASE_ANON_KEY" -H "Authorization: Bearer $SUPABASE_ANON_KEY" 2>/dev/null); code=${code:-000}
+            echo "GET rest/v1/events?select=id&limit=1 -> $code"
+            [ "$code" = "200" ] || fail "GET $API/rest/v1/events?select=id&limit=1 with the anon key answered HTTP $code (expected 200)."
+          fi
+
+          if [ -s detail.txt ]; then
+            echo "verdict=unhealthy" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict=ok" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Report
+        if: steps.check.outputs.verdict != 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          DETAIL="$(cat detail.txt 2>/dev/null || echo 'The probe produced no detail, which is itself a defect worth reporting.')"
+          EXISTING="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          {
+            echo "$DETAIL"
+            echo
+            echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo
+            echo "What to check, in this order:"
+            echo "1. Is it the domain or the app: \`curl -sI $SITE/\` and \`curl -s $SITE/version.json\`."
+            echo "2. Is it Supabase: the project's status page and \`curl -s -X POST $API/functions/v1/check-in -H 'Content-Type: application/json' -d '{}'\`."
+            echo "3. The portal's event-day runbook (docs/testing/event-day-runbook.md in the portal repository) names the degraded modes for the door."
+          } > body.md
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file body.md
+            echo "commented on #$EXISTING"
+          else
+            gh issue create --title "$ISSUE_TITLE" --assignee "$ASSIGNEE" --body-file body.md
+          fi
+
+      - name: Close the issue on recovery
+        if: steps.check.outputs.verdict == 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          EXISTING="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "$EXISTING" ]; then
+            {
+              echo "Recovered: all four predicates passed at $(date -u +%Y-%m-%dT%H:%M:%SZ)."
+              echo
+              echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            } > recovery.md
+            gh issue close "$EXISTING" --comment "$(cat recovery.md)"
+            echo "closed #$EXISTING"
+          else
+            echo "no open issue"
+          fi
+
+      - name: Fail the run so the schedule surfaces it
+        if: steps.check.outputs.verdict != 'ok'
+        run: |
+          echo "::error::$(tr '\n' ' ' < detail.txt 2>/dev/null || echo 'no detail recorded')"
+          exit 1
