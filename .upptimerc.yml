@@ -31,7 +31,7 @@ status-website:
 
 # Notifications
 assignees:
-  - decimai
+  - thebenignhacker
 
 # Check every 5 minutes
 workflowSchedule:

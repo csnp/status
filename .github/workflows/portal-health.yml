@@ -44,7 +44,9 @@ jobs:
       SITE: https://portal.csnp.org
       API: https://yciegikykkpdbahppgwg.supabase.co
       ISSUE_TITLE: 'portal.csnp.org is not healthy'
-      ASSIGNEE: decimai
+      # The org owner. The status assignee in .upptimerc.yml was a laptop login, not a
+      # GitHub user, until 2026-09-16; both name the same person now.
+      ASSIGNEE: thebenignhacker
     steps:
       - name: Probe the four predicates
         id: check
@@ -96,6 +98,9 @@ jobs:
             echo "verdict=ok" >> "$GITHUB_OUTPUT"
           fi
 
+      # There is no checkout step (the probe reads nothing from this repository), so every gh
+      # call names the repository: without a working tree gh cannot infer it and fails with
+      # "not a git repository". Measured on the first dispatch, 2026-09-16.
       - name: Report
         if: steps.check.outputs.verdict != 'ok'
         env:
@@ -103,7 +108,7 @@ jobs:
         run: |
           set -euo pipefail
           DETAIL="$(cat detail.txt 2>/dev/null || echo 'The probe produced no detail, which is itself a defect worth reporting.')"
-          EXISTING="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          EXISTING="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
           {
             echo "$DETAIL"
             echo
@@ -115,10 +120,10 @@ jobs:
             echo "3. The portal's event-day runbook (docs/testing/event-day-runbook.md in the portal repository) names the degraded modes for the door."
           } > body.md
           if [ -n "$EXISTING" ]; then
-            gh issue comment "$EXISTING" --body-file body.md
+            gh issue comment -R "$GITHUB_REPOSITORY" "$EXISTING" --body-file body.md
             echo "commented on #$EXISTING"
           else
-            gh issue create --title "$ISSUE_TITLE" --assignee "$ASSIGNEE" --body-file body.md
+            gh issue create -R "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --assignee "$ASSIGNEE" --body-file body.md
           fi
 
       - name: Close the issue on recovery
@@ -127,14 +132,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          EXISTING="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
+          EXISTING="$(gh issue list -R "$GITHUB_REPOSITORY" --state open --search "\"$ISSUE_TITLE\" in:title" --json number --jq '.[0].number // empty')"
           if [ -n "$EXISTING" ]; then
             {
               echo "Recovered: all four predicates passed at $(date -u +%Y-%m-%dT%H:%M:%SZ)."
               echo
               echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             } > recovery.md
-            gh issue close "$EXISTING" --comment "$(cat recovery.md)"
+            gh issue close -R "$GITHUB_REPOSITORY" "$EXISTING" --comment "$(cat recovery.md)"
             echo "closed #$EXISTING"
           else
             echo "no open issue"
