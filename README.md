@@ -1,10 +1,14 @@
 # CSNP Status
 
-Public status page for CSNP services powered by [Upptime](https://upptime.js.org).
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+[Website](https://status.csnp.org)
+
+Public status page for CSNP services, built with [Upptime](https://upptime.js.org).
 
 ## Live Status
 
-🔗 **[status.csnp.org](https://status.csnp.org)** (or [csnp.github.io/status](https://csnp.github.io/status))
+**[status.csnp.org](https://status.csnp.org)** (or [csnp.github.io/status](https://csnp.github.io/status))
 
 ## Monitored Services
 
